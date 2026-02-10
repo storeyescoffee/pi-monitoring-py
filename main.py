@@ -22,7 +22,7 @@ except ImportError:
 
 
 # CONFIG (override via environment variables)
-RECORDINGS_DIR = os.path.expanduser(os.environ.get('RECORDINGS_DIR', '$HOME/recordings'))
+RECORDINGS_DIR = os.path.expanduser(os.path.expandvars('$HOME/recordings'))
 EXPECTED_INTERVAL_MINUTES = int(os.environ.get('EXPECTED_INTERVAL_MINUTES', '5'))
 TOLERANCE_SECONDS = int(os.environ.get('TOLERANCE_SECONDS', '60'))
 
