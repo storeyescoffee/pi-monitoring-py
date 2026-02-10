@@ -1,0 +1,38 @@
+{
+  "board_id": "1000000012345678",
+  "timestamp": "2026-02-10T16:52:45Z",
+  "recordings_directory": "/home/pi/recordings",
+  "camera_status": {
+    "status": "RECORDING",
+    "latest_file": "10022026_165235.mp4",
+    "latest_timestamp": "2026-02-10T16:52:35",
+    "file_size_mb": 8.45,
+    "message": "Camera is currently recording"
+  },
+  "offline_segments": {
+    "2026-02-09": [
+      {
+        "start": "08h30",
+        "end": "09h00"
+      },
+      {
+        "start": "17h00",
+        "end": "18h15"
+      }
+    ],
+    "2026-02-10": [
+      {
+        "start": "12h00",
+        "end": "12h30"
+      }
+    ]
+  },
+  "statistics": {
+    "first_recording": "2026-02-09T00:03:11",
+    "latest_recording": "2026-02-10T16:52:35",
+    "total_videos": 245,
+    "total_offline_minutes": 135.0,
+    "total_offline_segments": 3
+  }
+}
+
