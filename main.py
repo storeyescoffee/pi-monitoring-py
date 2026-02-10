@@ -22,7 +22,7 @@ except ImportError:
 
 
 # CONFIG (override via environment variables)
-RECORDINGS_DIR = os.path.expanduser(os.environ.get('RECORDINGS_DIR', '~/recordings'))
+RECORDINGS_DIR = os.path.expanduser(os.environ.get('RECORDINGS_DIR', '$HOME/recordings'))
 EXPECTED_INTERVAL_MINUTES = int(os.environ.get('EXPECTED_INTERVAL_MINUTES', '5'))
 TOLERANCE_SECONDS = int(os.environ.get('TOLERANCE_SECONDS', '60'))
 
@@ -159,7 +159,12 @@ def detect_offline_segments(videos: List[Tuple[datetime, str, Path]],
 
 def check_camera_status(videos: List[Tuple[datetime, str, Path]], 
                        interval_minutes: int = 5) -> str:
-    """Check if camera is currently recording using lsof command"""
+    """Check if camera is currently recording using lsof command.
+
+    Returns simplified status:
+      - 'recordings'      → at least one process is currently writing an .mp4 file
+      - 'not_recordings'  → no active writer detected (or no recordings yet)
+    """
     # Check if any process is writing to recordings directory
     try:
         # Run lsof to check for open files in recordings directory
@@ -180,11 +185,11 @@ def check_camera_status(videos: List[Tuple[datetime, str, Path]],
                         fd = parts[3]  # FD column (e.g., "4w" means file descriptor 4, write mode)
                         if 'w' in fd:  # Check if file is open for writing
                             # Process is writing to an mp4 file = actively recording
-                            return 'RECORDING'  # ONLINE
+                            return 'recordings'  # ONLINE / actively recording
         
-        # No active recording process found
+        # No active recording process found. Use files (if any) as a weak hint.
         if not videos:
-            return 'NO_RECORDINGS'  # OFFLINE
+            return 'not_recordings'
         
         # Fallback: check latest file timestamp if no process found
         latest_dt, _, _ = videos[-1]
@@ -192,15 +197,16 @@ def check_camera_status(videos: List[Tuple[datetime, str, Path]],
         time_since_latest = now - latest_dt
         expected_interval = timedelta(minutes=interval_minutes)
         
-        if time_since_latest < expected_interval + timedelta(minutes=2):
-            return 'FINISHING'  # Recently finished
+        # If we are very close to the last file time, consider this still "recordings"
+        if time_since_latest < expected_interval:
+            return 'recordings'
         else:
-            return 'OFFLINE'  # OFFLINE
+            return 'not_recordings'
             
     except (subprocess.TimeoutExpired, subprocess.SubprocessError, FileNotFoundError):
-        # If lsof command fails, fallback to file timestamp check
+        # If lsof command fails, fallback purely to file timestamp check
         if not videos:
-            return 'NO_RECORDINGS'
+            return 'not_recordings'
         
         latest_dt, _, _ = videos[-1]
         now = datetime.now()
@@ -208,11 +214,9 @@ def check_camera_status(videos: List[Tuple[datetime, str, Path]],
         expected_interval = timedelta(minutes=interval_minutes)
         
         if time_since_latest < expected_interval:
-            return 'RECORDING'
-        elif time_since_latest < expected_interval + timedelta(minutes=2):
-            return 'FINISHING'
+            return 'recordings'
         else:
-            return 'OFFLINE'
+            return 'not_recordings'
 
 
 def build_payload(videos: List[Tuple[datetime, str, Path]]) -> Dict:
