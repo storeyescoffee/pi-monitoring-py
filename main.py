@@ -177,19 +177,42 @@ def check_camera_status(videos: List[Tuple[datetime, str, Path]],
         
         if lsof_output.returncode == 0 and lsof_output.stdout.strip():
             # Parse lsof output: COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
-            # Example: ffmpeg  703 m0hcine24 4w   REG  179,2 54001712 428735 recordings/video_000428.mp4
+            # Example: ffmpeg  703 m0hcine24 4w   REG  179,2 54001712 428735 /home/user/recordings/video_000428.mp4
             for line in lsof_output.stdout.split('\n'):
+                line = line.strip()
+                # Skip empty lines and header
+                if not line or line.startswith('COMMAND'):
+                    continue
+                
+                # Check if this line references an .mp4 file
                 if '.mp4' in line:
                     parts = line.split()
+                    # Need at least 4 parts: COMMAND PID USER FD
                     if len(parts) >= 4:
                         fd = parts[3]  # FD column (e.g., "4w" means file descriptor 4, write mode)
-                        if 'w' in fd:  # Check if file is open for writing
+                        # Check if file is open for writing (w, u, or a in FD)
+                        # 'w' = write, 'u' = read/write, 'a' = append
+                        if any(mode in fd for mode in ['w', 'u', 'a']):
                             # Process is writing to an mp4 file = actively recording
+                            print(f"✅ Detected active recording: {parts[0]} (PID {parts[1]}) writing to .mp4 file", file=sys.stderr)
                             return 'recordings'  # ONLINE / actively recording
+                    else:
+                        # Log parsing issue for debugging
+                        print(f"⚠️ Could not parse lsof line (only {len(parts)} parts): {line[:80]}", file=sys.stderr)
+        
+        # If we got here, lsof ran but didn't find any active .mp4 writers
+        if lsof_output.returncode == 0:
+            # Debug: show what lsof actually found
+            if lsof_output.stdout.strip():
+                print(f"ℹ️ lsof output (no .mp4 writers detected):", file=sys.stderr)
+                for line in lsof_output.stdout.strip().split('\n')[:5]:  # Show first 5 lines
+                    print(f"   {line}", file=sys.stderr)
+            else:
+                print(f"ℹ️ lsof found no open files in {RECORDINGS_DIR}", file=sys.stderr)
         
         # No active recording process found. Use files (if any) as a weak hint.
         if not videos:
-            return 'not_recordings'
+            return 'not_recording'
         
         # Fallback: check latest file timestamp if no process found
         latest_dt, _, _ = videos[-1]
@@ -199,11 +222,52 @@ def check_camera_status(videos: List[Tuple[datetime, str, Path]],
         
         # If we are very close to the last file time, consider this still "recordings"
         if time_since_latest < expected_interval:
+            print(f"ℹ️ Using timestamp fallback: latest file is {int(time_since_latest.total_seconds())}s old", file=sys.stderr)
             return 'recordings'
         else:
             return 'not_recordings'
             
-    except (subprocess.TimeoutExpired, subprocess.SubprocessError, FileNotFoundError):
+    except subprocess.TimeoutExpired:
+        print(f"⚠️ lsof command timed out after 2 seconds", file=sys.stderr)
+        # Fallback to timestamp check
+        if not videos:
+            return 'not_recording'
+        latest_dt, _, _ = videos[-1]
+        now = datetime.now()
+        time_since_latest = now - latest_dt
+        expected_interval = timedelta(minutes=interval_minutes)
+        if time_since_latest < expected_interval:
+            return 'recordings'
+        else:
+            return 'not_recordings'
+            
+    except FileNotFoundError:
+        print(f"⚠️ lsof command not found, using timestamp fallback", file=sys.stderr)
+        # If lsof command fails, fallback purely to file timestamp check
+        if not videos:
+            return 'not_recording'
+        latest_dt, _, _ = videos[-1]
+        now = datetime.now()
+        time_since_latest = now - latest_dt
+        expected_interval = timedelta(minutes=interval_minutes)
+        if time_since_latest < expected_interval:
+            return 'recordings'
+        else:
+            return 'not_recordings'
+            
+    except Exception as e:
+        print(f"⚠️ Error checking camera status: {e}", file=sys.stderr)
+        # Fallback to timestamp check
+        if not videos:
+            return 'not_recording'
+        latest_dt, _, _ = videos[-1]
+        now = datetime.now()
+        time_since_latest = now - latest_dt
+        expected_interval = timedelta(minutes=interval_minutes)
+        if time_since_latest < expected_interval:
+            return 'recordings'
+        else:
+            return 'not_recordings'
         # If lsof command fails, fallback purely to file timestamp check
         if not videos:
             return 'not_recordings'
