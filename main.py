@@ -8,7 +8,8 @@ import os
 import json
 import sys
 import time
-from datetime import datetime, timedelta
+import subprocess
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 from collections import defaultdict
@@ -158,21 +159,60 @@ def detect_offline_segments(videos: List[Tuple[datetime, str, Path]],
 
 def check_camera_status(videos: List[Tuple[datetime, str, Path]], 
                        interval_minutes: int = 5) -> str:
-    """Check if camera is currently recording"""
-    if not videos:
-        return 'NO_RECORDINGS'
-    
-    latest_dt, _, _ = videos[-1]
-    now = datetime.now()
-    time_since_latest = now - latest_dt
-    expected_interval = timedelta(minutes=interval_minutes)
-    
-    if time_since_latest < expected_interval:
-        return 'RECORDING'
-    elif time_since_latest < expected_interval + timedelta(minutes=2):
-        return 'FINISHING'
-    else:
-        return 'OFFLINE'
+    """Check if camera is currently recording using lsof command"""
+    # Check if any process is writing to recordings directory
+    try:
+        # Run lsof to check for open files in recordings directory
+        lsof_output = subprocess.run(
+            ['lsof', '+D', RECORDINGS_DIR],
+            capture_output=True,
+            text=True,
+            timeout=2
+        )
+        
+        if lsof_output.returncode == 0 and lsof_output.stdout.strip():
+            # Parse lsof output: COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
+            # Example: ffmpeg  703 m0hcine24 4w   REG  179,2 54001712 428735 recordings/video_000428.mp4
+            for line in lsof_output.stdout.split('\n'):
+                if '.mp4' in line:
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        fd = parts[3]  # FD column (e.g., "4w" means file descriptor 4, write mode)
+                        if 'w' in fd:  # Check if file is open for writing
+                            # Process is writing to an mp4 file = actively recording
+                            return 'RECORDING'  # ONLINE
+        
+        # No active recording process found
+        if not videos:
+            return 'NO_RECORDINGS'  # OFFLINE
+        
+        # Fallback: check latest file timestamp if no process found
+        latest_dt, _, _ = videos[-1]
+        now = datetime.now()
+        time_since_latest = now - latest_dt
+        expected_interval = timedelta(minutes=interval_minutes)
+        
+        if time_since_latest < expected_interval + timedelta(minutes=2):
+            return 'FINISHING'  # Recently finished
+        else:
+            return 'OFFLINE'  # OFFLINE
+            
+    except (subprocess.TimeoutExpired, subprocess.SubprocessError, FileNotFoundError):
+        # If lsof command fails, fallback to file timestamp check
+        if not videos:
+            return 'NO_RECORDINGS'
+        
+        latest_dt, _, _ = videos[-1]
+        now = datetime.now()
+        time_since_latest = now - latest_dt
+        expected_interval = timedelta(minutes=interval_minutes)
+        
+        if time_since_latest < expected_interval:
+            return 'RECORDING'
+        elif time_since_latest < expected_interval + timedelta(minutes=2):
+            return 'FINISHING'
+        else:
+            return 'OFFLINE'
 
 
 def build_payload(videos: List[Tuple[datetime, str, Path]]) -> Dict:
@@ -194,7 +234,7 @@ def build_payload(videos: List[Tuple[datetime, str, Path]]) -> Dict:
     
     payload = {
         'board_id': BOARD_ID,
-        'timestamp': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
         'camera_status': camera_status,
         'offline_segments': offline_segments,
         'latest_recording': {
@@ -216,7 +256,7 @@ def publish_mqtt(payload: Dict, topic: str) -> bool:
         print(f"📡 Publishing recordings status (attempt {attempt}/{RETRIES})")
         
         try:
-            client = mqtt.Client()
+            client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
             client.username_pw_set(MQTT_USER, MQTT_PASS)
             
             # Set timeout
@@ -268,7 +308,7 @@ def main():
         # Still publish status
         payload = {
             'board_id': BOARD_ID,
-            'timestamp': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
             'camera_status': 'NO_RECORDINGS',
             'offline_segments': {},
             'total_videos': 0,
